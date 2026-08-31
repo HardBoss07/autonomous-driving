@@ -2,9 +2,11 @@ use crate::core::track::Track;
 use macroquad::prelude::*;
 
 pub fn draw_track(track: &Track, grid_texture: Option<&Texture2D>) {
-    if !track.mesh.vertices.is_empty() {
-        if track.mesh.texture.is_some() {
-            draw_mesh(&track.mesh);
+    if !track.meshes.is_empty() {
+        if track.meshes[0].texture.is_some() {
+            for mesh in &track.meshes {
+                draw_mesh(mesh);
+            }
         } else {
             draw_procedural_fallback_mesh(track);
         }

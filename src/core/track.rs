@@ -60,7 +60,7 @@ pub struct Track {
     pub raw_points: Vec<Vec2>,
     pub segments: Vec<TrackSegment>,
     pub is_closed: bool,
-    pub mesh: Mesh,
+    pub meshes: Vec<Mesh>,
 }
 
 impl Track {
@@ -72,19 +72,14 @@ impl Track {
             raw_points: Vec::new(),
             segments: Vec::new(),
             is_closed: false,
-            mesh: Mesh {
-                vertices: Vec::new(),
-                indices: Vec::new(),
-                texture: None,
-            },
+            meshes: Vec::new(),
         }
     }
 
     pub fn clear(&mut self) {
         self.raw_points.clear();
         self.segments.clear();
-        self.mesh.vertices.clear();
-        self.mesh.indices.clear();
+        self.meshes.clear();
         self.is_closed = false;
     }
 
@@ -109,7 +104,6 @@ impl Track {
         let exit_target = self.starting_grid.exit_target();
         let entry_target = self.starting_grid.entry_target();
 
-        // 1. Build linear anchor sequence starting from the finish line exit
         let mut pts = Vec::new();
         pts.push(grid_end);
         pts.push(grid_start);
@@ -144,7 +138,6 @@ impl Track {
             return;
         }
 
-        // 2. Resample and smooth points
         let resampled = resample_points(&pts, 40.0);
         let smoothed =
             smooth_points_with_fixed_prefix(&resampled, self.is_closed, 2, fixed_prefix_count);
@@ -157,7 +150,6 @@ impl Track {
         let mut cumulative_dist = 0.0;
         let mut last_center: Option<Vec2> = None;
 
-        // 3. Evaluate Catmull-Rom splines strictly within linear bounds (no index wrapping on open splines)
         for i in 1..len - 1 {
             let p1 = smoothed[i];
             let p2 = smoothed[i + 1];
@@ -165,7 +157,7 @@ impl Track {
             let p3 = if i + 2 < len {
                 smoothed[i + 2]
             } else {
-                p2 + (p2 - p1) // Extrapolate end vector
+                p2 + (p2 - p1)
             };
 
             for step in 0..samples_per_segment {
@@ -194,73 +186,85 @@ impl Track {
     }
 
     fn generate_gpu_mesh(&mut self, track_texture: Option<&Texture2D>) {
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
+        self.meshes.clear();
 
         if self.segments.len() < 2 {
             return;
         }
 
         let tile_length = 120.0;
+        let chunk_size = 200; // Max quads per batch to stay under Macroquad's draw call limit
 
-        for i in 0..self.segments.len() - 1 {
-            let seg1 = &self.segments[i];
-            let seg2 = &self.segments[i + 1];
+        let total_segments = self.segments.len() - 1;
+        let mut idx = 0;
 
-            let d1 = seg1.distance_along_track;
-            let d2 = seg2.distance_along_track;
+        while idx < total_segments {
+            let end_idx = (idx + chunk_size).min(total_segments);
 
-            let v1 = (d1 % tile_length) / tile_length;
-            let mut v2 = (d2 % tile_length) / tile_length;
+            let mut vertices = Vec::new();
+            let mut indices = Vec::new();
 
-            if v2 < v1 {
-                v2 += 1.0;
+            for i in idx..end_idx {
+                let seg1 = &self.segments[i];
+                let seg2 = &self.segments[i + 1];
+
+                let d1 = seg1.distance_along_track;
+                let d2 = seg2.distance_along_track;
+
+                let v1 = (d1 % tile_length) / tile_length;
+                let mut v2 = (d2 % tile_length) / tile_length;
+
+                if v2 < v1 {
+                    v2 += 1.0;
+                }
+
+                let base_idx = vertices.len() as u16;
+
+                vertices.push(Vertex {
+                    position: vec3(seg1.left_bound.x, seg1.left_bound.y, 0.0),
+                    uv: vec2(0.0, v1),
+                    color: WHITE.into(),
+                    normal: vec4(0.0, 0.0, 1.0, 0.0),
+                });
+
+                vertices.push(Vertex {
+                    position: vec3(seg1.right_bound.x, seg1.right_bound.y, 0.0),
+                    uv: vec2(1.0, v1),
+                    color: WHITE.into(),
+                    normal: vec4(0.0, 0.0, 1.0, 0.0),
+                });
+
+                vertices.push(Vertex {
+                    position: vec3(seg2.left_bound.x, seg2.left_bound.y, 0.0),
+                    uv: vec2(0.0, v2),
+                    color: WHITE.into(),
+                    normal: vec4(0.0, 0.0, 1.0, 0.0),
+                });
+
+                vertices.push(Vertex {
+                    position: vec3(seg2.right_bound.x, seg2.right_bound.y, 0.0),
+                    uv: vec2(1.0, v2),
+                    color: WHITE.into(),
+                    normal: vec4(0.0, 0.0, 1.0, 0.0),
+                });
+
+                indices.push(base_idx);
+                indices.push(base_idx + 1);
+                indices.push(base_idx + 2);
+
+                indices.push(base_idx + 1);
+                indices.push(base_idx + 3);
+                indices.push(base_idx + 2);
             }
 
-            let base_idx = vertices.len() as u16;
-
-            vertices.push(Vertex {
-                position: vec3(seg1.left_bound.x, seg1.left_bound.y, 0.0),
-                uv: vec2(0.0, v1),
-                color: WHITE.into(),
-                normal: vec4(0.0, 0.0, 1.0, 0.0),
+            self.meshes.push(Mesh {
+                vertices,
+                indices,
+                texture: track_texture.cloned(),
             });
 
-            vertices.push(Vertex {
-                position: vec3(seg1.right_bound.x, seg1.right_bound.y, 0.0),
-                uv: vec2(1.0, v1),
-                color: WHITE.into(),
-                normal: vec4(0.0, 0.0, 1.0, 0.0),
-            });
-
-            vertices.push(Vertex {
-                position: vec3(seg2.left_bound.x, seg2.left_bound.y, 0.0),
-                uv: vec2(0.0, v2),
-                color: WHITE.into(),
-                normal: vec4(0.0, 0.0, 1.0, 0.0),
-            });
-
-            vertices.push(Vertex {
-                position: vec3(seg2.right_bound.x, seg2.right_bound.y, 0.0),
-                uv: vec2(1.0, v2),
-                color: WHITE.into(),
-                normal: vec4(0.0, 0.0, 1.0, 0.0),
-            });
-
-            indices.push(base_idx);
-            indices.push(base_idx + 1);
-            indices.push(base_idx + 2);
-
-            indices.push(base_idx + 1);
-            indices.push(base_idx + 3);
-            indices.push(base_idx + 2);
+            idx = end_idx;
         }
-
-        self.mesh = Mesh {
-            vertices,
-            indices,
-            texture: track_texture.cloned(),
-        };
     }
 }
 
