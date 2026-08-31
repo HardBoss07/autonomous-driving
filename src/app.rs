@@ -21,6 +21,7 @@ pub struct App {
     pub track_texture: Option<Texture2D>,
     pub grid_texture: Option<Texture2D>,
     pub camera_zoom: f32,
+    pub camera_target: Vec2,
 }
 
 impl App {
@@ -53,7 +54,8 @@ impl App {
             car_texture,
             track_texture,
             grid_texture,
-            camera_zoom: 0.6,
+            camera_zoom: 0.8,
+            camera_target: screen_center,
         }
     }
 
@@ -63,18 +65,38 @@ impl App {
 
             match self.mode {
                 AppMode::Driving => {
+                    // 1. Process Input & Physics
                     let input = CarInput::read_keyboard();
                     self.car.update(&input, &self.config, dt);
-                    self.car.wrap_screen_bounds(screen_width(), screen_height());
+
+                    // 2. Smoothly interpolate camera target position towards car
+                    let car_pos = vec2(self.car.pos_x, self.car.pos_y);
+                    let follow_speed = 6.0; // Higher = tighter camera follow
+                    self.camera_target +=
+                        (car_pos - self.camera_target) * (follow_speed * dt).min(1.0);
 
                     clear_background(Color::new(0.08, 0.08, 0.10, 1.0));
-                    debug::draw_grid(64.0, screen_width(), screen_height());
 
+                    // 3. Render World Space Elements (Camera Follow)
+                    set_camera(&Camera2D {
+                        target: self.camera_target,
+                        zoom: vec2(
+                            (2.0 / screen_width()) * self.camera_zoom,
+                            (2.0 / screen_height()) * self.camera_zoom,
+                        ),
+                        ..Default::default()
+                    });
+
+                    // Render grid around active camera target area
+                    debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
                     track_render::draw_track(&self.track, self.grid_texture.as_ref());
 
                     let is_drifting = input.is_drifting();
                     debug::draw_car(&self.car, self.car_texture.as_ref(), input.handbrake);
                     debug::draw_drift_indicator(&self.car, is_drifting);
+
+                    // 4. Render Screen Space UI Elements
+                    set_default_camera();
 
                     ui::draw_telemetry(&self.car, is_drifting);
                     ui::draw_tuning(&mut self.config);
@@ -116,7 +138,7 @@ impl App {
                         ..Default::default()
                     });
 
-                    debug::draw_grid(64.0, screen_width() * 2.0, screen_height() * 2.0);
+                    debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
                     track_render::draw_track(&self.track, self.grid_texture.as_ref());
                     self.editor.draw_snap_previews(&self.track, world_mouse);
 
@@ -128,6 +150,8 @@ impl App {
                     if done {
                         self.track.rebuild_mesh(5, self.track_texture.as_ref());
                         self.mode = AppMode::Driving;
+                        // Snap camera instantly to car position upon exiting editor
+                        self.camera_target = vec2(self.car.pos_x, self.car.pos_y);
                     }
                 }
             }
