@@ -2,6 +2,18 @@ use crate::core::car::{CarConfig, CarState};
 use macroquad::prelude::*;
 use macroquad::ui::{hash, root_ui, widgets};
 
+pub fn draw_editor_toggle_button() -> bool {
+    let mut toggle = false;
+    widgets::Window::new(hash!(), vec2(15.0, 110.0), vec2(240.0, 45.0))
+        .label("Track Menu")
+        .ui(&mut root_ui(), |ui| {
+            if ui.button(None, "Open Track Builder Mode") {
+                toggle = true;
+            }
+        });
+    toggle
+}
+
 pub fn draw_telemetry(car: &CarState, is_drifting: bool) {
     draw_rectangle(15.0, 15.0, 240.0, 85.0, Color::new(0.0, 0.0, 0.0, 0.75));
     draw_text(&format!("FPS: {}", get_fps()), 25.0, 38.0, 24.0, GREEN);
