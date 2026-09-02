@@ -1,4 +1,5 @@
 use crate::core::car::CarState;
+use crate::core::track::CheckpointGate;
 use macroquad::prelude::*;
 use std::f32::consts::PI;
 
@@ -47,5 +48,33 @@ pub fn draw_car(car: &CarState, car_texture: Option<&Texture2D>, handbrake: bool
 pub fn draw_drift_indicator(car: &CarState, is_drifting: bool) {
     if is_drifting {
         draw_circle_lines(car.pos_x, car.pos_y, 40.0, 2.0, RED);
+    }
+}
+
+pub fn draw_checkpoints(checkpoints: &[CheckpointGate], next_checkpoint_idx: usize) {
+    for (idx, gate) in checkpoints.iter().enumerate() {
+        let is_target = idx == next_checkpoint_idx;
+        let is_start_finish = idx == 0;
+
+        let (color, thick) = if is_target {
+            (GREEN, 3.5)
+        } else if is_start_finish {
+            (GOLD, 2.5)
+        } else {
+            (Color::new(1.0, 0.2, 0.2, 0.45), 1.5)
+        };
+
+        draw_line(
+            gate.line.a.x,
+            gate.line.a.y,
+            gate.line.b.x,
+            gate.line.b.y,
+            thick,
+            color,
+        );
+
+        // Draw checkpoint ID tag at segment midpoint
+        let mid = (gate.line.a + gate.line.b) * 0.5;
+        draw_text(&format!("{}", gate.id), mid.x, mid.y, 14.0, WHITE);
     }
 }
