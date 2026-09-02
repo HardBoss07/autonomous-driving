@@ -23,6 +23,7 @@ pub struct App {
     pub driving_zoom: f32,
     pub editor_zoom: f32,
     pub camera_target: Vec2,
+    pub show_checkpoints: bool,
 }
 
 impl App {
@@ -46,9 +47,13 @@ impl App {
         let mut track = Track::new(screen_center);
         track.rebuild_mesh(5, track_texture.as_ref());
 
+        let (spawn_pos, spawn_heading) = track.start_grid_config.get_anchor_transform(0);
+        let mut car = CarState::new(spawn_pos.x, spawn_pos.y);
+        car.heading = spawn_heading;
+
         Self {
             mode: AppMode::Driving,
-            car: CarState::new(screen_center.x, screen_center.y),
+            car,
             config: CarConfig::default(),
             track,
             editor: TrackEditor::new(),
@@ -57,18 +62,38 @@ impl App {
             grid_texture,
             driving_zoom: 1.0,
             editor_zoom: 0.5,
-            camera_target: screen_center,
+            camera_target: spawn_pos,
+            show_checkpoints: false,
         }
     }
 
     pub async fn run_loop(&mut self) {
         loop {
             let dt = get_frame_time().min(0.05);
+            let current_time = get_time();
 
             match self.mode {
                 AppMode::Driving => {
+                    // Keybinds: R to reset to starting grid & clear stats, C to toggle checkpoints debug
+                    if is_key_pressed(KeyCode::R) {
+                        let (spawn_pos, spawn_heading) =
+                            self.track.start_grid_config.get_anchor_transform(0);
+                        self.car.reset_to_grid(spawn_pos, spawn_heading);
+                        self.camera_target = spawn_pos;
+                    }
+
+                    if is_key_pressed(KeyCode::C) {
+                        self.show_checkpoints = !self.show_checkpoints;
+                    }
+
                     let input = CarInput::read_keyboard();
-                    self.car.update(&input, &self.config, dt);
+                    self.car.update(
+                        &input,
+                        &self.config,
+                        &self.track.checkpoints,
+                        dt,
+                        current_time,
+                    );
 
                     let car_pos = vec2(self.car.pos_x, self.car.pos_y);
                     let follow_speed = 6.0;
@@ -89,6 +114,13 @@ impl App {
                     debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
                     track_render::draw_track(&self.track, self.grid_texture.as_ref());
 
+                    if self.show_checkpoints {
+                        debug::draw_checkpoints(
+                            &self.track.checkpoints,
+                            self.car.timing.next_checkpoint_idx,
+                        );
+                    }
+
                     let is_drifting = input.is_drifting();
                     debug::draw_car(&self.car, self.car_texture.as_ref(), input.handbrake);
                     debug::draw_drift_indicator(&self.car, is_drifting);
@@ -100,11 +132,6 @@ impl App {
 
                     if ui::draw_editor_toggle_button() {
                         self.mode = AppMode::TrackEditor;
-                        self.car.pos_x = self.track.starting_grid.position.x;
-                        self.car.pos_y = self.track.starting_grid.position.y;
-                        self.car.heading = self.track.starting_grid.rotation;
-                        self.car.vel_x = 0.0;
-                        self.car.vel_y = 0.0;
                     }
                 }
                 AppMode::TrackEditor => {
@@ -144,10 +171,16 @@ impl App {
                     let done = self
                         .editor
                         .update_and_draw_ui(&mut self.track, &mut self.editor_zoom);
+
                     if done {
                         self.track.rebuild_mesh(5, self.track_texture.as_ref());
                         self.mode = AppMode::Driving;
-                        self.camera_target = vec2(self.car.pos_x, self.car.pos_y);
+
+                        // Reset car state & clear old laptimes for new track
+                        let (spawn_pos, heading) =
+                            self.track.start_grid_config.get_anchor_transform(0);
+                        self.car.reset_to_grid(spawn_pos, heading);
+                        self.camera_target = spawn_pos;
                     }
                 }
             }
