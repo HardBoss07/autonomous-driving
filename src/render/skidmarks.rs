@@ -29,15 +29,11 @@ impl SkidmarkManager {
         }
     }
 
-    /// Calculates rear wheel world positions for a 64x32 car sprite centered at (pos_x, pos_y).
     pub fn get_rear_wheel_positions(car: &CarState) -> (Vec2, Vec2) {
         let car_pos = vec2(car.pos_x, car.pos_y);
         let forward = vec2(car.heading.cos(), car.heading.sin());
         let right = vec2(-car.heading.sin(), car.heading.cos());
 
-        // Local offsets for 64x32 sprite:
-        // Rear axle offset: -16px back from center along forward vector.
-        // Track width offset: +-10px out from center along right vector.
         let rear_axle = forward * -16.0;
         let half_track = right * 10.0;
 
@@ -48,28 +44,22 @@ impl SkidmarkManager {
     }
 
     pub fn update(&mut self, car: &CarState, input: &CarInput, dt: f32) {
-        // Fade existing skid mark segments over time
         let alpha_decay = (self.max_alpha / self.fade_duration) * dt;
         for segment in &mut self.segments {
             segment.alpha -= alpha_decay;
         }
         self.segments.retain(|s| s.alpha > 0.0);
 
-        // Check screeching conditions (from Video Part 2):
-        // 1. Braking/Handbraking while moving
-        // 2. High lateral (sideways) skidding velocity while turning
-        let is_braking = (input.brake > 0.05 || input.handbrake) && car.speed() > 30.0;
-        let is_lat_skidding = car.lateral_velocity().abs() > 120.0 && car.speed() > 50.0;
+        let is_braking = input.brake > 0.05 || input.is_straight_braking();
+        let is_drifting = input.is_drifting();
+        let is_moving = car.speed() > 30.0;
 
-        let should_emit = is_braking || is_lat_skidding;
-
-        if should_emit {
+        if (is_braking || is_drifting) && is_moving {
             let (curr_left, curr_right) = Self::get_rear_wheel_positions(car);
 
             if let (Some(prev_left), Some(prev_right)) =
                 (self.last_left_wheel, self.last_right_wheel)
             {
-                // Reduced threshold from 1.0 to 0.01 so continuous lines draw smoothly at high frame rates
                 if prev_left.distance_squared(curr_left) > 0.01 {
                     self.segments.push(SkidSegment {
                         start: prev_left,

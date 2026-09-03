@@ -6,7 +6,7 @@ pub fn draw_tuning(config: &mut CarConfig) {
     widgets::Window::new(
         hash!(),
         vec2(screen_width() - 340.0, 15.0),
-        vec2(320.0, 370.0),
+        vec2(320.0, 320.0),
     )
     .label("Tuning Controls (WASD + Space)")
     .ui(&mut root_ui(), |ui| {
@@ -24,18 +24,17 @@ pub fn draw_tuning(config: &mut CarConfig) {
             &mut config.brake_force,
         );
         ui.slider(hash!(), "Turn Rate", 1.0..10.0, &mut config.turn_rate);
+        ui.slider(
+            hash!(),
+            "Drift Multiplier",
+            1.2..4.0,
+            &mut config.drift_turn_multiplier,
+        );
 
         let mut drag_ui = config.drag_coeff * 10000.0;
         ui.slider(hash!(), "Drag (x10k)", 1.0..50.0, &mut drag_ui);
         config.drag_coeff = drag_ui / 10000.0;
 
         ui.slider(hash!(), "Grip Normal", 0.50..0.99, &mut config.grip_normal);
-        ui.slider(hash!(), "Grip Drift", 0.001..0.15, &mut config.grip_drift);
-        ui.slider(
-            hash!(),
-            "Recovery",
-            0.5..10.0,
-            &mut config.drift_recovery_rate,
-        );
     });
 }

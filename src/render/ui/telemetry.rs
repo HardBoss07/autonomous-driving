@@ -38,7 +38,7 @@ pub fn draw_telemetry(car: &CarState, is_drifting: bool) {
         WHITE,
     );
     draw_text(
-        &format!("Grip: {:.0}%", car.current_grip * 100.0),
+        &format!("Drift Mode: {}", if is_drifting { "ON" } else { "OFF" }),
         25.0,
         73.0,
         16.0,

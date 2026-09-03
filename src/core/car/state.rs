@@ -14,7 +14,6 @@ pub struct CarState {
     pub vel_x: f32,
     pub vel_y: f32,
     pub heading: f32,
-    pub current_grip: f32,
     pub timing: TimingState,
 }
 
@@ -28,7 +27,6 @@ impl CarState {
             vel_x: 0.0,
             vel_y: 0.0,
             heading: -PI / 2.0,
-            current_grip: 0.88,
             timing: TimingState::default(),
         }
     }
@@ -49,20 +47,25 @@ impl CarState {
 
         let current_vel = vec2(self.vel_x, self.vel_y);
         let v_long = current_vel.dot(forward);
-        let mut v_lat = current_vel.dot(right);
+        let v_lat = current_vel.dot(right);
 
-        let is_drifting = input.handbrake || input.is_drifting();
+        let is_drifting = input.is_drifting();
 
-        // Kick out lateral velocity when handbrake is engaged during turns
-        if input.handbrake && input.is_steering() && v_long.abs() > 100.0 {
-            v_lat += input.steer * 15.0;
-        }
+        // 1. Steering with Mario Kart style turn multiplier
+        self.update_steering(
+            input.steer,
+            config.turn_rate,
+            config.drift_turn_multiplier,
+            v_long,
+            is_drifting,
+            dt,
+        );
 
-        self.update_steering(input.steer, config.turn_rate, v_long, is_drifting, dt);
-        self.update_grip(is_drifting, config, dt);
-
+        // 2. Acceleration / Braking
         let new_v_long = self.compute_longitudinal_velocity(v_long, input, config, dt);
-        let new_v_lat = self.compute_lateral_velocity(v_lat, dt);
+
+        // 3. High grip lateral velocity damping (prevents uncontrollable floaty slides)
+        let new_v_lat = v_lat * (1.0f32 - config.grip_normal).powf(dt * 60.0);
 
         let new_vel = forward * new_v_long + right * new_v_lat;
         self.vel_x = new_vel.x;
@@ -87,7 +90,6 @@ impl CarState {
         self.vel_x = 0.0;
         self.vel_y = 0.0;
         self.heading = heading;
-        self.current_grip = 0.88;
         self.timing.reset();
     }
 
@@ -95,32 +97,23 @@ impl CarState {
         &mut self,
         steer_input: f32,
         turn_rate: f32,
+        drift_multiplier: f32,
         v_long: f32,
         is_drifting: bool,
         dt: f32,
     ) {
-        let turn_threshold = 150.0;
+        let turn_threshold = 120.0;
         let turn_factor = (v_long.abs() / turn_threshold).clamp(0.0, 1.0);
         let steering_direction = if v_long < -10.0 { -1.0 } else { 1.0 };
 
-        // Extra turn rate during handbrake drift for rapid angle changes
-        let effective_turn_rate = if is_drifting {
-            turn_rate * 1.3
+        let active_turn_rate = if is_drifting {
+            turn_rate * drift_multiplier
         } else {
             turn_rate
         };
 
-        self.heading += steer_input * effective_turn_rate * steering_direction * turn_factor * dt;
+        self.heading += steer_input * active_turn_rate * steering_direction * turn_factor * dt;
         self.heading = self.heading.rem_euclid(2.0 * PI);
-    }
-
-    fn update_grip(&mut self, is_drifting: bool, config: &CarConfig, dt: f32) {
-        let target_grip = if is_drifting {
-            config.grip_drift
-        } else {
-            config.grip_normal
-        };
-        self.current_grip += (target_grip - self.current_grip) * config.drift_recovery_rate * dt;
     }
 
     fn compute_longitudinal_velocity(
@@ -145,16 +138,7 @@ impl CarState {
         }
     }
 
-    fn compute_lateral_velocity(&self, v_lat: f32, dt: f32) -> f32 {
-        v_lat * (1.0f32 - self.current_grip).powf(dt * 60.0)
-    }
-
     pub fn speed(&self) -> f32 {
         (self.vel_x * self.vel_x + self.vel_y * self.vel_y).sqrt()
-    }
-
-    pub fn lateral_velocity(&self) -> f32 {
-        let right = vec2(-self.heading.sin(), self.heading.cos());
-        vec2(self.vel_x, self.vel_y).dot(right)
     }
 }
