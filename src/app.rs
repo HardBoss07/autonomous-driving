@@ -2,6 +2,7 @@ use crate::core::car::{CarConfig, CarState};
 use crate::core::physics::CarInput;
 use crate::core::track::Track;
 use crate::render::editor::TrackEditor;
+use crate::render::skidmarks::SkidmarkManager;
 use crate::render::{debug, track_render, ui};
 use macroquad::prelude::*;
 
@@ -17,6 +18,7 @@ pub struct App {
     pub config: CarConfig,
     pub track: Track,
     pub editor: TrackEditor,
+    pub skidmark_manager: SkidmarkManager,
     pub car_texture: Option<Texture2D>,
     pub track_texture: Option<Texture2D>,
     pub grid_texture: Option<Texture2D>,
@@ -57,6 +59,7 @@ impl App {
             config: CarConfig::default(),
             track,
             editor: TrackEditor::new(),
+            skidmark_manager: SkidmarkManager::new(20.0), // Fade duration of 20 seconds
             car_texture,
             track_texture,
             grid_texture,
@@ -80,6 +83,7 @@ impl App {
                             self.track.start_grid_config.get_anchor_transform(0);
                         self.car.reset_to_grid(spawn_pos, spawn_heading);
                         self.camera_target = spawn_pos;
+                        self.skidmark_manager.clear();
                     }
 
                     if is_key_pressed(KeyCode::C) {
@@ -94,6 +98,9 @@ impl App {
                         dt,
                         current_time,
                     );
+
+                    // Update skid marks during braking
+                    self.skidmark_manager.update(&self.car, &input, dt);
 
                     let car_pos = vec2(self.car.pos_x, self.car.pos_y);
                     let follow_speed = 6.0;
@@ -113,6 +120,9 @@ impl App {
 
                     debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
                     track_render::draw_track(&self.track, self.grid_texture.as_ref());
+
+                    // Render skid marks underneath the car sprite
+                    self.skidmark_manager.draw();
 
                     if self.show_checkpoints {
                         debug::draw_checkpoints(
@@ -176,11 +186,12 @@ impl App {
                         self.track.rebuild_mesh(5, self.track_texture.as_ref());
                         self.mode = AppMode::Driving;
 
-                        // Reset car state & clear old laptimes for new track
+                        // Reset car state & clear old laptimes and skid marks for new track
                         let (spawn_pos, heading) =
                             self.track.start_grid_config.get_anchor_transform(0);
                         self.car.reset_to_grid(spawn_pos, heading);
                         self.camera_target = spawn_pos;
+                        self.skidmark_manager.clear();
                     }
                 }
             }

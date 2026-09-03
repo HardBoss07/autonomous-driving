@@ -30,7 +30,7 @@ pub fn draw_tuning(config: &mut CarConfig) {
         config.drag_coeff = drag_ui / 10000.0;
 
         ui.slider(hash!(), "Grip Normal", 0.50..0.99, &mut config.grip_normal);
-        ui.slider(hash!(), "Grip Drift", 0.01..0.45, &mut config.grip_drift);
+        ui.slider(hash!(), "Grip Drift", 0.001..0.15, &mut config.grip_drift);
         ui.slider(
             hash!(),
             "Recovery",

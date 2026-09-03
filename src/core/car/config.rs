@@ -19,7 +19,7 @@ impl Default for CarConfig {
             drag_coeff: 0.0012,
             turn_rate: 4.2,
             grip_normal: 0.88,
-            grip_drift: 0.12,
+            grip_drift: 0.03, // Lower grip value during drift retains sideways momentum
             drift_recovery_rate: 3.5,
         }
     }

@@ -49,10 +49,17 @@ impl CarState {
 
         let current_vel = vec2(self.vel_x, self.vel_y);
         let v_long = current_vel.dot(forward);
-        let v_lat = current_vel.dot(right);
+        let mut v_lat = current_vel.dot(right);
 
-        self.update_steering(input.steer, config.turn_rate, v_long, dt);
-        self.update_grip(input.is_drifting(), config, dt);
+        let is_drifting = input.handbrake || input.is_drifting();
+
+        // Kick out lateral velocity when handbrake is engaged during turns
+        if input.handbrake && input.is_steering() && v_long.abs() > 100.0 {
+            v_lat += input.steer * 15.0;
+        }
+
+        self.update_steering(input.steer, config.turn_rate, v_long, is_drifting, dt);
+        self.update_grip(is_drifting, config, dt);
 
         let new_v_long = self.compute_longitudinal_velocity(v_long, input, config, dt);
         let new_v_lat = self.compute_lateral_velocity(v_lat, dt);
@@ -84,12 +91,26 @@ impl CarState {
         self.timing.reset();
     }
 
-    fn update_steering(&mut self, steer_input: f32, turn_rate: f32, v_long: f32, dt: f32) {
+    fn update_steering(
+        &mut self,
+        steer_input: f32,
+        turn_rate: f32,
+        v_long: f32,
+        is_drifting: bool,
+        dt: f32,
+    ) {
         let turn_threshold = 150.0;
         let turn_factor = (v_long.abs() / turn_threshold).clamp(0.0, 1.0);
         let steering_direction = if v_long < -10.0 { -1.0 } else { 1.0 };
 
-        self.heading += steer_input * turn_rate * steering_direction * turn_factor * dt;
+        // Extra turn rate during handbrake drift for rapid angle changes
+        let effective_turn_rate = if is_drifting {
+            turn_rate * 1.3
+        } else {
+            turn_rate
+        };
+
+        self.heading += steer_input * effective_turn_rate * steering_direction * turn_factor * dt;
         self.heading = self.heading.rem_euclid(2.0 * PI);
     }
 
@@ -128,21 +149,12 @@ impl CarState {
         v_lat * (1.0f32 - self.current_grip).powf(dt * 60.0)
     }
 
-    pub fn wrap_screen_bounds(&mut self, screen_width: f32, screen_height: f32) {
-        if self.pos_x < 0.0 {
-            self.pos_x = screen_width;
-        } else if self.pos_x > screen_width {
-            self.pos_x = 0.0;
-        }
-
-        if self.pos_y < 0.0 {
-            self.pos_y = screen_height;
-        } else if self.pos_y > screen_height {
-            self.pos_y = 0.0;
-        }
-    }
-
     pub fn speed(&self) -> f32 {
         (self.vel_x * self.vel_x + self.vel_y * self.vel_y).sqrt()
+    }
+
+    pub fn lateral_velocity(&self) -> f32 {
+        let right = vec2(-self.heading.sin(), self.heading.cos());
+        vec2(self.vel_x, self.vel_y).dot(right)
     }
 }
