@@ -23,6 +23,7 @@ pub struct TrackEditor {
     pub is_drawing: bool,
     pub is_dragging_start: bool,
     pub is_dragging_node: bool,
+    pub is_rotating_grid: bool,
     pub selected_node_index: Option<usize>,
     pub hovered_node_index: Option<usize>,
     pub snap_distance: f32,
@@ -40,10 +41,11 @@ impl TrackEditor {
             is_drawing: false,
             is_dragging_start: false,
             is_dragging_node: false,
+            is_rotating_grid: false,
             selected_node_index: None,
             hovered_node_index: None,
             snap_distance: 90.0,
-            ui_rect: Rect::new(15.0, 15.0, 260.0, 480.0),
+            ui_rect: Rect::new(15.0, 15.0, 260.0, 520.0),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             show_help_overlay: true,
@@ -179,6 +181,14 @@ impl TrackEditor {
                 track.rebuild_mesh(5, track_tex);
             }
 
+            let mut tol = track.simplify_tolerance;
+            ui.slider(hash!(), "Curve Smoothness", 0.0..12.0, &mut tol);
+            if (tol - track.simplify_tolerance).abs() > 0.01 {
+                track.simplify_tolerance = tol;
+                track.simplify_raw_points();
+                track.rebuild_mesh(5, track_tex);
+            }
+
             if ui.button(None, "Clear Track Curve") {
                 self.save_snapshot(track);
                 track.clear();
@@ -186,11 +196,11 @@ impl TrackEditor {
             }
 
             ui.separator();
-            ui.label(None, "--- AI CHECKPOINT GATES ---");
-            let mut spacing_f32 = track.checkpoint_spacing as f32;
-            ui.slider(hash!(), "Gate Spacing", 5.0..40.0, &mut spacing_f32);
-            if (spacing_f32 as usize) != track.checkpoint_spacing {
-                track.checkpoint_spacing = spacing_f32 as usize;
+            ui.label(None, "--- LAP CHECKPOINTS ---");
+            let mut spacing = track.checkpoint_spacing;
+            ui.slider(hash!(), "Gate Spacing", 100.0..1200.0, &mut spacing);
+            if (spacing - track.checkpoint_spacing).abs() > 1.0 {
+                track.checkpoint_spacing = spacing;
                 track.rebuild_mesh(5, track_tex);
             }
 
@@ -269,18 +279,32 @@ impl TrackEditor {
         }
 
         let wheel_y = mouse_wheel().1;
-        if wheel_y != 0.0 && !over_ui {
-            let zoom_factor = if wheel_y > 0.0 { 1.15 } else { 0.85 };
-            let old_zoom = *camera_zoom;
-            let new_zoom = (old_zoom * zoom_factor).clamp(0.05, 3.0);
+        let left_ctrl = is_key_down(KeyCode::LeftControl);
 
-            if (new_zoom - old_zoom).abs() > 0.0001 {
-                let screen_center = vec2(screen_width() * 0.5, screen_height() * 0.5);
-                let mouse_offset = screen_mouse - screen_center;
-                let world_before = *camera_target + mouse_offset / old_zoom;
+        if left_ctrl && wheel_y != 0.0 {
+            if !self.is_rotating_grid {
+                self.save_snapshot(track);
+                self.is_rotating_grid = true;
+            }
+            let step_rad = 5.0_f32.to_radians();
+            track.starting_grid.rotation += wheel_y.signum() * step_rad;
+            track.rebuild_mesh(3, track_tex);
+        } else {
+            self.is_rotating_grid = false;
 
-                *camera_zoom = new_zoom;
-                *camera_target = world_before - mouse_offset / new_zoom;
+            if wheel_y != 0.0 && !over_ui {
+                let zoom_factor = if wheel_y > 0.0 { 1.15 } else { 0.85 };
+                let old_zoom = *camera_zoom;
+                let new_zoom = (old_zoom * zoom_factor).clamp(0.05, 3.0);
+
+                if (new_zoom - old_zoom).abs() > 0.0001 {
+                    let screen_center = vec2(screen_width() * 0.5, screen_height() * 0.5);
+                    let mouse_offset = screen_mouse - screen_center;
+                    let world_before = *camera_target + mouse_offset / old_zoom;
+
+                    *camera_zoom = new_zoom;
+                    *camera_target = world_before - mouse_offset / new_zoom;
+                }
             }
         }
 
@@ -299,12 +323,15 @@ impl TrackEditor {
         }
 
         let ctrl_down = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
-        if ctrl_down && is_key_pressed(KeyCode::Z) {
-            self.undo(track, track_tex);
-            return;
-        }
-        if ctrl_down && is_key_pressed(KeyCode::Y) {
-            self.redo(track, track_tex);
+        let shift_down = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        let z_or_y_pressed = is_key_pressed(KeyCode::Z) || is_key_pressed(KeyCode::Y);
+
+        if ctrl_down && z_or_y_pressed {
+            if shift_down {
+                self.redo(track, track_tex);
+            } else {
+                self.undo(track, track_tex);
+            }
             return;
         }
 
@@ -369,11 +396,6 @@ impl TrackEditor {
                         track.rebuild_mesh(3, track_tex);
                     }
                 }
-
-                if wheel_y != 0.0 && !over_ui && self.is_dragging_start {
-                    track.starting_grid.rotation += wheel_y.signum() * 0.1;
-                    track.rebuild_mesh(3, track_tex);
-                }
             }
             EditorTool::NodePlace => {
                 if !over_ui && is_mouse_button_pressed(MouseButton::Left) {
@@ -437,6 +459,7 @@ impl TrackEditor {
                             track.is_closed = true;
                         }
                     }
+                    track.simplify_raw_points();
                     track.rebuild_mesh(5, track_tex);
                 }
             }
@@ -526,10 +549,10 @@ impl TrackEditor {
     }
 
     pub fn draw_help_overlay(&self) {
-        let x = screen_width() - 280.0;
+        let x = screen_width() - 310.0;
         let y = 15.0;
-        let w = 265.0;
-        let h = 230.0;
+        let w = 295.0;
+        let h = 250.0;
 
         draw_rectangle(x, y, w, h, Color::new(0.02, 0.02, 0.05, 0.85));
         draw_rectangle_lines(x, y, w, h, 2.0, Color::new(0.3, 0.5, 0.9, 0.8));
@@ -544,6 +567,7 @@ impl TrackEditor {
         let keybinds = [
             ("WASD / Arrows", "Pan Camera"),
             ("Mouse Scroll", "Zoom to Cursor"),
+            ("Left Ctrl + Scroll", "Rotate Start Grid 5°"),
             ("Middle Drag", "Pan Canvas"),
             ("Key [ F ]", "Focus Track Center"),
             ("Left Click", "Draw / Place / Drag"),
@@ -553,7 +577,7 @@ impl TrackEditor {
 
         for (key, action) in keybinds {
             draw_text(key, x + 12.0, cur_y, font_size, WHITE);
-            draw_text(action, x + 130.0, cur_y, font_size, LIGHTGRAY);
+            draw_text(action, x + 145.0, cur_y, font_size, LIGHTGRAY);
             cur_y += line_height;
         }
     }

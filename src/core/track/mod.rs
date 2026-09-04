@@ -6,7 +6,6 @@ pub use checkpoint::CheckpointGate;
 pub use grid::{StartGridConfig, StartingGrid};
 pub use segment::TrackSegment;
 
-use crate::core::geometry::LineSegment;
 use macroquad::prelude::*;
 
 pub struct Track {
@@ -18,7 +17,8 @@ pub struct Track {
     pub checkpoints: Vec<CheckpointGate>,
     pub is_closed: bool,
     pub meshes: Vec<Mesh>,
-    pub checkpoint_spacing: usize,
+    pub checkpoint_spacing: f32,
+    pub simplify_tolerance: f32,
 }
 
 impl Track {
@@ -34,7 +34,8 @@ impl Track {
             checkpoints: Vec::new(),
             is_closed: false,
             meshes: Vec::new(),
-            checkpoint_spacing: 15,
+            checkpoint_spacing: 350.0,
+            simplify_tolerance: 3.0,
         }
     }
 
@@ -48,7 +49,7 @@ impl Track {
 
     pub fn add_raw_point(&mut self, point: Vec2) {
         if let Some(&last) = self.raw_points.last() {
-            if last.distance(point) < 20.0 {
+            if last.distance(point) < 15.0 {
                 return;
             }
         }
@@ -73,6 +74,13 @@ impl Track {
         }
     }
 
+    pub fn simplify_raw_points(&mut self) {
+        if self.simplify_tolerance <= 0.01 || self.raw_points.len() < 3 {
+            return;
+        }
+        self.raw_points = ramer_douglas_peucker(&self.raw_points, self.simplify_tolerance);
+    }
+
     pub fn rebuild_mesh(&mut self, samples_per_segment: usize, track_texture: Option<&Texture2D>) {
         self.segments.clear();
         self.checkpoints.clear();
@@ -95,9 +103,19 @@ impl Track {
         pts.push(grid_start);
         pts.push(exit_target);
 
-        for &p in &self.raw_points {
+        let mut raw_iter = self.raw_points.iter().peekable();
+        while let Some(&&p) = raw_iter.peek() {
+            let proj = (p - grid_start).dot(fwd);
+            if proj < 72.0 || p.distance(exit_target) < 20.0 {
+                raw_iter.next();
+            } else {
+                break;
+            }
+        }
+
+        for &p in raw_iter {
             if let Some(&last) = pts.last() {
-                if last.distance(p) > 2.0 {
+                if last.distance(p) > 15.0 {
                     pts.push(p);
                 }
             } else {
@@ -106,6 +124,18 @@ impl Track {
         }
 
         if self.is_closed {
+            while let Some(&last) = pts.last() {
+                if last == grid_start || last == exit_target {
+                    break;
+                }
+                let proj_entry = (last - grid_end).dot(-fwd);
+                if proj_entry < 72.0 || last.distance(entry_target) < 20.0 {
+                    pts.pop();
+                } else {
+                    break;
+                }
+            }
+
             pts.push(entry_target);
             pts.push(grid_end);
         }
@@ -167,37 +197,50 @@ impl Track {
 
     fn generate_checkpoints(&mut self) {
         let total_segs = self.segments.len();
-        if total_segs < 10 {
+        if total_segs < 6 {
             return;
         }
 
         let margin = 50.0;
-        let min_gate_spacing = self.checkpoint_spacing.max(3);
-        let step_size = min_gate_spacing.max(total_segs / 25);
-
+        let target_spacing = self.checkpoint_spacing.clamp(100.0, 2000.0);
+        let min_curve_gate_distance = (target_spacing * 0.45).max(120.0);
         let mut id = 0;
 
         let seg0 = &self.segments[0];
-        self.checkpoints.push(CheckpointGate {
-            id,
-            line: LineSegment::new(
-                seg0.left_bound - seg0.normal * margin,
-                seg0.right_bound + seg0.normal * margin,
-            ),
-        });
+        let mut last_gate_pos = seg0.center;
+        let mut last_gate_dist_along = seg0.distance_along_track;
+
+        self.checkpoints
+            .push(CheckpointGate::from_track_segment(id, seg0, margin));
         id += 1;
 
-        let max_idx = total_segs.saturating_sub(step_size);
-        for idx in (step_size..max_idx).step_by(step_size) {
-            let seg = &self.segments[idx];
-            self.checkpoints.push(CheckpointGate {
-                id,
-                line: LineSegment::new(
-                    seg.left_bound - seg.normal * margin,
-                    seg.right_bound + seg.normal * margin,
-                ),
-            });
-            id += 1;
+        let mut accumulated_angle = 0.0f32;
+
+        for idx in 1..total_segs {
+            let prev_seg = &self.segments[idx - 1];
+            let curr_seg = &self.segments[idx];
+
+            let dot = prev_seg.tangent.dot(curr_seg.tangent).clamp(-1.0, 1.0);
+            let angle_diff = dot.acos();
+            accumulated_angle += angle_diff;
+
+            let dist_along = curr_seg.distance_along_track - last_gate_dist_along;
+            let direct_dist = curr_seg.center.distance(last_gate_pos);
+
+            let curve_threshold = 0.785; // ~45 degrees turn
+
+            let reached_normal_spacing = dist_along >= target_spacing;
+            let reached_curve_spacing =
+                direct_dist >= min_curve_gate_distance && accumulated_angle >= curve_threshold;
+
+            if reached_normal_spacing || reached_curve_spacing {
+                self.checkpoints
+                    .push(CheckpointGate::from_track_segment(id, curr_seg, margin));
+                id += 1;
+                last_gate_pos = curr_seg.center;
+                last_gate_dist_along = curr_seg.distance_along_track;
+                accumulated_angle = 0.0;
+            }
         }
     }
 
@@ -281,6 +324,45 @@ impl Track {
 
             idx = end_idx;
         }
+    }
+}
+
+fn perpendicular_distance(point: Vec2, line_a: Vec2, line_b: Vec2) -> f32 {
+    let len_sq = line_a.distance_squared(line_b);
+    if len_sq < 1e-6 {
+        return point.distance(line_a);
+    }
+    let t = ((point - line_a).dot(line_b - line_a) / len_sq).clamp(0.0, 1.0);
+    let projection = line_a + (line_b - line_a) * t;
+    point.distance(projection)
+}
+
+fn ramer_douglas_peucker(points: &[Vec2], epsilon: f32) -> Vec<Vec2> {
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+
+    let mut dmax = 0.0;
+    let mut index = 0;
+    let end = points.len() - 1;
+
+    for i in 1..end {
+        let d = perpendicular_distance(points[i], points[0], points[end]);
+        if d > dmax {
+            index = i;
+            dmax = d;
+        }
+    }
+
+    if dmax > epsilon {
+        let mut rec1 = ramer_douglas_peucker(&points[..=index], epsilon);
+        let rec2 = ramer_douglas_peucker(&points[index..], epsilon);
+
+        rec1.pop();
+        rec1.extend(rec2);
+        rec1
+    } else {
+        vec![points[0], points[end]]
     }
 }
 
