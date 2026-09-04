@@ -22,6 +22,7 @@ pub struct App {
     pub car_texture: Option<Texture2D>,
     pub track_texture: Option<Texture2D>,
     pub grid_texture: Option<Texture2D>,
+    pub wall_texture: Option<Texture2D>,
     pub driving_zoom: f32,
     pub editor_zoom: f32,
     pub camera_target: Vec2,
@@ -45,6 +46,11 @@ impl App {
             texture.set_filter(FilterMode::Nearest);
         }
 
+        let wall_texture = load_texture("assets/textures/wall.png").await.ok();
+        if let Some(ref texture) = wall_texture {
+            texture.set_filter(FilterMode::Nearest);
+        }
+
         let screen_center = vec2(screen_width() * 0.5, screen_height() * 0.5);
         let mut track = Track::new(screen_center);
         track.rebuild_mesh(5, track_texture.as_ref());
@@ -59,10 +65,11 @@ impl App {
             config: CarConfig::default(),
             track,
             editor: TrackEditor::new(),
-            skidmark_manager: SkidmarkManager::new(20.0), // Fade duration of 20 seconds
+            skidmark_manager: SkidmarkManager::new(20.0),
             car_texture,
             track_texture,
             grid_texture,
+            wall_texture,
             driving_zoom: 1.0,
             editor_zoom: 0.5,
             camera_target: spawn_pos,
@@ -77,7 +84,6 @@ impl App {
 
             match self.mode {
                 AppMode::Driving => {
-                    // Keybinds: R to reset to starting grid & clear stats, C to toggle checkpoints debug
                     if is_key_pressed(KeyCode::R) {
                         let (spawn_pos, spawn_heading) =
                             self.track.start_grid_config.get_anchor_transform(0);
@@ -91,15 +97,9 @@ impl App {
                     }
 
                     let input = CarInput::read_keyboard();
-                    self.car.update(
-                        &input,
-                        &self.config,
-                        &self.track.checkpoints,
-                        dt,
-                        current_time,
-                    );
+                    self.car
+                        .update(&input, &self.config, &self.track, dt, current_time);
 
-                    // Update skid marks during braking
                     self.skidmark_manager.update(&self.car, &input, dt);
 
                     let car_pos = vec2(self.car.pos_x, self.car.pos_y);
@@ -119,9 +119,12 @@ impl App {
                     });
 
                     debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
-                    track_render::draw_track(&self.track, self.grid_texture.as_ref());
+                    track_render::draw_track(
+                        &self.track,
+                        self.grid_texture.as_ref(),
+                        self.wall_texture.as_ref(),
+                    );
 
-                    // Render skid marks underneath the car sprite
                     self.skidmark_manager.draw();
 
                     if self.show_checkpoints {
@@ -174,7 +177,11 @@ impl App {
                     });
 
                     debug::draw_grid(64.0, screen_width() * 10.0, screen_height() * 10.0);
-                    track_render::draw_track(&self.track, self.grid_texture.as_ref());
+                    track_render::draw_track(
+                        &self.track,
+                        self.grid_texture.as_ref(),
+                        self.wall_texture.as_ref(),
+                    );
                     self.editor
                         .draw_snap_previews(&self.track, world_mouse, self.editor_zoom);
 
@@ -194,7 +201,6 @@ impl App {
                         self.track.rebuild_mesh(5, self.track_texture.as_ref());
                         self.mode = AppMode::Driving;
 
-                        // Reset car state & clear old laptimes and skid marks for new track
                         let (spawn_pos, heading) =
                             self.track.start_grid_config.get_anchor_transform(0);
                         self.car.reset_to_grid(spawn_pos, heading);

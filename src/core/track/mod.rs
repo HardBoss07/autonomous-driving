@@ -81,6 +81,58 @@ impl Track {
         self.raw_points = ramer_douglas_peucker(&self.raw_points, self.simplify_tolerance);
     }
 
+    pub fn grid_segments(&self) -> Vec<TrackSegment> {
+        let grid = &self.starting_grid;
+        let start = grid.end_point();
+        let end = grid.start_point();
+        let fwd = grid.forward_vector();
+        let right = grid.right_vector();
+        let half_w = grid.width * 0.5;
+        let num_samples = 6;
+
+        let mut segs = Vec::with_capacity(num_samples);
+        for i in 0..num_samples {
+            let t = i as f32 / (num_samples - 1) as f32;
+            let center = start.lerp(end, t);
+            segs.push(TrackSegment {
+                center,
+                left_bound: center - right * half_w,
+                right_bound: center + right * half_w,
+                normal: right,
+                tangent: fwd,
+                distance_along_track: t * grid.length,
+            });
+        }
+        segs
+    }
+
+    pub fn find_nearest_segment(&self, pos: Vec2) -> Option<(TrackSegment, usize, f32)> {
+        let mut best_seg: Option<TrackSegment> = None;
+        let mut min_dist_sq = f32::MAX;
+        let mut best_idx = 0;
+
+        let grid_segs = self.grid_segments();
+        for (idx, seg) in grid_segs.into_iter().enumerate() {
+            let d_sq = seg.center.distance_squared(pos);
+            if d_sq < min_dist_sq {
+                min_dist_sq = d_sq;
+                best_seg = Some(seg);
+                best_idx = idx;
+            }
+        }
+
+        for (idx, seg) in self.segments.iter().enumerate() {
+            let d_sq = seg.center.distance_squared(pos);
+            if d_sq < min_dist_sq {
+                min_dist_sq = d_sq;
+                best_seg = Some(*seg);
+                best_idx = idx;
+            }
+        }
+
+        best_seg.map(|seg| (seg, best_idx, min_dist_sq.sqrt()))
+    }
+
     pub fn rebuild_mesh(&mut self, samples_per_segment: usize, track_texture: Option<&Texture2D>) {
         self.segments.clear();
         self.checkpoints.clear();
@@ -227,7 +279,7 @@ impl Track {
             let dist_along = curr_seg.distance_along_track - last_gate_dist_along;
             let direct_dist = curr_seg.center.distance(last_gate_pos);
 
-            let curve_threshold = 0.785; // ~45 degrees turn
+            let curve_threshold = 0.785;
 
             let reached_normal_spacing = dist_along >= target_spacing;
             let reached_curve_spacing =
