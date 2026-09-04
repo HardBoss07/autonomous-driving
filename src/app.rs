@@ -147,24 +147,25 @@ impl App {
                 AppMode::TrackEditor => {
                     let mouse_pos = mouse_position();
                     let screen_mouse = vec2(mouse_pos.0, mouse_pos.1);
-                    let world_mouse = vec2(
-                        (mouse_pos.0 - screen_width() * 0.5) / self.editor_zoom
-                            + screen_width() * 0.5,
-                        (mouse_pos.1 - screen_height() * 0.5) / self.editor_zoom
-                            + screen_height() * 0.5,
-                    );
+                    let screen_center = vec2(screen_width() * 0.5, screen_height() * 0.5);
+
+                    let world_mouse =
+                        self.camera_target + (screen_mouse - screen_center) / self.editor_zoom;
 
                     self.editor.handle_input(
                         &mut self.track,
                         self.track_texture.as_ref(),
                         world_mouse,
                         screen_mouse,
+                        &mut self.camera_target,
+                        &mut self.editor_zoom,
+                        dt,
                     );
 
                     clear_background(Color::new(0.05, 0.05, 0.07, 1.0));
 
                     set_camera(&Camera2D {
-                        target: vec2(screen_width() * 0.5, screen_height() * 0.5),
+                        target: self.camera_target,
                         zoom: vec2(
                             (2.0 / screen_width()) * self.editor_zoom,
                             (2.0 / screen_height()) * self.editor_zoom,
@@ -172,15 +173,22 @@ impl App {
                         ..Default::default()
                     });
 
-                    debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
+                    debug::draw_grid(64.0, screen_width() * 10.0, screen_height() * 10.0);
                     track_render::draw_track(&self.track, self.grid_texture.as_ref());
-                    self.editor.draw_snap_previews(&self.track, world_mouse);
+                    self.editor
+                        .draw_snap_previews(&self.track, world_mouse, self.editor_zoom);
 
                     set_default_camera();
 
-                    let done = self
-                        .editor
-                        .update_and_draw_ui(&mut self.track, &mut self.editor_zoom);
+                    let done = self.editor.update_and_draw_ui(
+                        &mut self.track,
+                        &mut self.editor_zoom,
+                        self.track_texture.as_ref(),
+                    );
+
+                    if self.editor.show_help_overlay {
+                        self.editor.draw_help_overlay();
+                    }
 
                     if done {
                         self.track.rebuild_mesh(5, self.track_texture.as_ref());

@@ -18,6 +18,7 @@ pub struct Track {
     pub checkpoints: Vec<CheckpointGate>,
     pub is_closed: bool,
     pub meshes: Vec<Mesh>,
+    pub checkpoint_spacing: usize,
 }
 
 impl Track {
@@ -33,6 +34,7 @@ impl Track {
             checkpoints: Vec::new(),
             is_closed: false,
             meshes: Vec::new(),
+            checkpoint_spacing: 15,
         }
     }
 
@@ -51,6 +53,24 @@ impl Track {
             }
         }
         self.raw_points.push(point);
+    }
+
+    pub fn remove_raw_point(&mut self, index: usize) {
+        if index < self.raw_points.len() {
+            self.raw_points.remove(index);
+        }
+    }
+
+    pub fn insert_raw_point(&mut self, index: usize, point: Vec2) {
+        if index <= self.raw_points.len() {
+            self.raw_points.insert(index, point);
+        }
+    }
+
+    pub fn move_raw_point(&mut self, index: usize, new_pos: Vec2) {
+        if index < self.raw_points.len() {
+            self.raw_points[index] = new_pos;
+        }
     }
 
     pub fn rebuild_mesh(&mut self, samples_per_segment: usize, track_texture: Option<&Texture2D>) {
@@ -152,7 +172,7 @@ impl Track {
         }
 
         let margin = 50.0;
-        let min_gate_spacing = 15;
+        let min_gate_spacing = self.checkpoint_spacing.max(3);
         let step_size = min_gate_spacing.max(total_segs / 25);
 
         let mut id = 0;
