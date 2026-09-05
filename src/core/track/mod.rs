@@ -6,6 +6,7 @@ pub use checkpoint::CheckpointGate;
 pub use grid::{StartGridConfig, StartingGrid};
 pub use segment::TrackSegment;
 
+use crate::core::geometry::BoundingBox;
 use macroquad::prelude::*;
 
 pub struct Track {
@@ -14,9 +15,13 @@ pub struct Track {
     pub start_grid_config: StartGridConfig,
     pub raw_points: Vec<Vec2>,
     pub segments: Vec<TrackSegment>,
+    pub cached_grid_segments: Vec<TrackSegment>,
     pub checkpoints: Vec<CheckpointGate>,
     pub is_closed: bool,
     pub meshes: Vec<Mesh>,
+    pub mesh_bounding_boxes: Vec<BoundingBox>,
+    pub wall_meshes: Vec<Mesh>,
+    pub wall_mesh_bounding_boxes: Vec<BoundingBox>,
     pub checkpoint_spacing: f32,
     pub simplify_tolerance: f32,
 }
@@ -25,18 +30,24 @@ impl Track {
     pub fn new(start_pos: Vec2) -> Self {
         let starting_grid = StartingGrid::new(start_pos);
         let start_grid_config = StartGridConfig::new(start_pos, 0.0);
-        Self {
+        let mut track = Self {
             width: starting_grid.width,
             starting_grid,
             start_grid_config,
             raw_points: Vec::new(),
             segments: Vec::new(),
+            cached_grid_segments: Vec::new(),
             checkpoints: Vec::new(),
             is_closed: false,
             meshes: Vec::new(),
+            mesh_bounding_boxes: Vec::new(),
+            wall_meshes: Vec::new(),
+            wall_mesh_bounding_boxes: Vec::new(),
             checkpoint_spacing: 350.0,
             simplify_tolerance: 3.0,
-        }
+        };
+        track.cached_grid_segments = track.compute_grid_segments();
+        track
     }
 
     pub fn clear(&mut self) {
@@ -44,6 +55,9 @@ impl Track {
         self.segments.clear();
         self.checkpoints.clear();
         self.meshes.clear();
+        self.mesh_bounding_boxes.clear();
+        self.wall_meshes.clear();
+        self.wall_mesh_bounding_boxes.clear();
         self.is_closed = false;
     }
 
@@ -81,7 +95,7 @@ impl Track {
         self.raw_points = ramer_douglas_peucker(&self.raw_points, self.simplify_tolerance);
     }
 
-    pub fn grid_segments(&self) -> Vec<TrackSegment> {
+    pub fn compute_grid_segments(&self) -> Vec<TrackSegment> {
         let grid = &self.starting_grid;
         let start = grid.end_point();
         let end = grid.start_point();
@@ -106,17 +120,20 @@ impl Track {
         segs
     }
 
+    pub fn grid_segments(&self) -> &[TrackSegment] {
+        &self.cached_grid_segments
+    }
+
     pub fn find_nearest_segment(&self, pos: Vec2) -> Option<(TrackSegment, usize, f32)> {
         let mut best_seg: Option<TrackSegment> = None;
         let mut min_dist_sq = f32::MAX;
         let mut best_idx = 0;
 
-        let grid_segs = self.grid_segments();
-        for (idx, seg) in grid_segs.into_iter().enumerate() {
+        for (idx, seg) in self.cached_grid_segments.iter().enumerate() {
             let d_sq = seg.center.distance_squared(pos);
             if d_sq < min_dist_sq {
                 min_dist_sq = d_sq;
-                best_seg = Some(seg);
+                best_seg = Some(*seg);
                 best_idx = idx;
             }
         }
@@ -133,11 +150,60 @@ impl Track {
         best_seg.map(|seg| (seg, best_idx, min_dist_sq.sqrt()))
     }
 
-    pub fn rebuild_mesh(&mut self, samples_per_segment: usize, track_texture: Option<&Texture2D>) {
+    pub fn find_nearest_segment_localized(
+        &self,
+        pos: Vec2,
+        cached_idx: Option<usize>,
+    ) -> Option<(TrackSegment, usize, f32)> {
+        if self.segments.is_empty() {
+            return self.find_nearest_segment(pos);
+        }
+
+        if let Some(center_idx) = cached_idx {
+            if center_idx < self.segments.len() {
+                let window_radius = 12;
+                let start_idx = center_idx.saturating_sub(window_radius);
+                let end_idx = (center_idx + window_radius + 1).min(self.segments.len());
+
+                let mut local_best_seg: Option<TrackSegment> = None;
+                let mut local_min_dist_sq = f32::MAX;
+                let mut local_best_idx = center_idx;
+
+                for idx in start_idx..end_idx {
+                    let seg = &self.segments[idx];
+                    let d_sq = seg.center.distance_squared(pos);
+                    if d_sq < local_min_dist_sq {
+                        local_min_dist_sq = d_sq;
+                        local_best_seg = Some(*seg);
+                        local_best_idx = idx;
+                    }
+                }
+
+                // If car is within the track/kerb corridor (e.g. 150px squared = 22500), local window is reliable
+                if local_min_dist_sq < 22500.0 {
+                    return local_best_seg.map(|seg| (seg, local_best_idx, local_min_dist_sq.sqrt()));
+                }
+            }
+        }
+
+        self.find_nearest_segment(pos)
+    }
+
+    pub fn rebuild_mesh(
+        &mut self,
+        samples_per_segment: usize,
+        track_texture: Option<&Texture2D>,
+        wall_texture: Option<&Texture2D>,
+    ) {
         self.segments.clear();
         self.checkpoints.clear();
+        self.cached_grid_segments = self.compute_grid_segments();
 
         if self.raw_points.is_empty() {
+            self.meshes.clear();
+            self.mesh_bounding_boxes.clear();
+            self.wall_meshes.clear();
+            self.wall_mesh_bounding_boxes.clear();
             return;
         }
 
@@ -245,6 +311,7 @@ impl Track {
 
         self.generate_checkpoints();
         self.generate_gpu_mesh(track_texture);
+        self.generate_wall_meshes(wall_texture);
     }
 
     fn generate_checkpoints(&mut self) {
@@ -298,6 +365,7 @@ impl Track {
 
     fn generate_gpu_mesh(&mut self, track_texture: Option<&Texture2D>) {
         self.meshes.clear();
+        self.mesh_bounding_boxes.clear();
 
         if self.segments.len() < 2 {
             return;
@@ -315,6 +383,9 @@ impl Track {
             let mut vertices = Vec::new();
             let mut indices = Vec::new();
 
+            let mut min_bound = vec2(f32::MAX, f32::MAX);
+            let mut max_bound = vec2(f32::MIN, f32::MIN);
+
             for i in idx..end_idx {
                 let seg1 = &self.segments[i];
                 let seg2 = &self.segments[i + 1];
@@ -328,6 +399,17 @@ impl Track {
                 if v2 < v1 {
                     v2 += 1.0;
                 }
+
+                min_bound = min_bound
+                    .min(seg1.left_bound)
+                    .min(seg1.right_bound)
+                    .min(seg2.left_bound)
+                    .min(seg2.right_bound);
+                max_bound = max_bound
+                    .max(seg1.left_bound)
+                    .max(seg1.right_bound)
+                    .max(seg2.left_bound)
+                    .max(seg2.right_bound);
 
                 let base_idx = vertices.len() as u16;
 
@@ -373,8 +455,171 @@ impl Track {
                 indices,
                 texture: track_texture.cloned(),
             });
+            self.mesh_bounding_boxes
+                .push(BoundingBox::new(min_bound, max_bound));
 
             idx = end_idx;
+        }
+    }
+
+    fn generate_wall_meshes(&mut self, wall_texture: Option<&Texture2D>) {
+        self.wall_meshes.clear();
+        self.wall_mesh_bounding_boxes.clear();
+
+        let texture = match wall_texture {
+            Some(tex) => tex,
+            None => return,
+        };
+
+        let tile_length = 20.0;
+        let wall_width = 8.0;
+        let chunk_size = 150;
+
+        let wall_chains: [&[TrackSegment]; 2] = [&self.cached_grid_segments, &self.segments];
+
+        for chain in wall_chains {
+            if chain.len() < 2 {
+                continue;
+            }
+
+            let total_segments = chain.len() - 1;
+            let mut idx = 0;
+
+            while idx < total_segments {
+                let end_idx = (idx + chunk_size).min(total_segments);
+
+                let mut vertices = Vec::new();
+                let mut indices = Vec::new();
+
+                let mut min_bound = vec2(f32::MAX, f32::MAX);
+                let mut max_bound = vec2(f32::MIN, f32::MIN);
+
+                for i in idx..end_idx {
+                    let s1 = &chain[i];
+                    let s2 = &chain[i + 1];
+
+                    let d1 = s1.distance_along_track;
+                    let d2 = s2.distance_along_track;
+
+                    let u1 = (d1 % tile_length) / tile_length;
+                    let mut u2 = (d2 % tile_length) / tile_length;
+                    if u2 < u1 {
+                        u2 += 1.0;
+                    }
+
+                    // Left Wall Geometry
+                    let l1_in = s1.left_bound;
+                    let l1_out = s1.left_bound - s1.normal * wall_width;
+                    let l2_in = s2.left_bound;
+                    let l2_out = s2.left_bound - s2.normal * wall_width;
+
+                    min_bound = min_bound
+                        .min(l1_in)
+                        .min(l1_out)
+                        .min(l2_in)
+                        .min(l2_out);
+                    max_bound = max_bound
+                        .max(l1_in)
+                        .max(l1_out)
+                        .max(l2_in)
+                        .max(l2_out);
+
+                    let base_l = vertices.len() as u16;
+                    vertices.push(Vertex {
+                        position: vec3(l1_out.x, l1_out.y, 0.0),
+                        uv: vec2(0.0, u1),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+                    vertices.push(Vertex {
+                        position: vec3(l1_in.x, l1_in.y, 0.0),
+                        uv: vec2(1.0, u1),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+                    vertices.push(Vertex {
+                        position: vec3(l2_out.x, l2_out.y, 0.0),
+                        uv: vec2(0.0, u2),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+                    vertices.push(Vertex {
+                        position: vec3(l2_in.x, l2_in.y, 0.0),
+                        uv: vec2(1.0, u2),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+
+                    indices.push(base_l);
+                    indices.push(base_l + 1);
+                    indices.push(base_l + 2);
+                    indices.push(base_l + 1);
+                    indices.push(base_l + 3);
+                    indices.push(base_l + 2);
+
+                    // Right Wall Geometry
+                    let r1_in = s1.right_bound;
+                    let r1_out = s1.right_bound + s1.normal * wall_width;
+                    let r2_in = s2.right_bound;
+                    let r2_out = s2.right_bound + s2.normal * wall_width;
+
+                    min_bound = min_bound
+                        .min(r1_in)
+                        .min(r1_out)
+                        .min(r2_in)
+                        .min(r2_out);
+                    max_bound = max_bound
+                        .max(r1_in)
+                        .max(r1_out)
+                        .max(r2_in)
+                        .max(r2_out);
+
+                    let base_r = vertices.len() as u16;
+                    vertices.push(Vertex {
+                        position: vec3(r1_in.x, r1_in.y, 0.0),
+                        uv: vec2(0.0, u1),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+                    vertices.push(Vertex {
+                        position: vec3(r1_out.x, r1_out.y, 0.0),
+                        uv: vec2(1.0, u1),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+                    vertices.push(Vertex {
+                        position: vec3(r2_in.x, r2_in.y, 0.0),
+                        uv: vec2(0.0, u2),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+                    vertices.push(Vertex {
+                        position: vec3(r2_out.x, r2_out.y, 0.0),
+                        uv: vec2(1.0, u2),
+                        color: WHITE.into(),
+                        normal: vec4(0.0, 0.0, 1.0, 0.0),
+                    });
+
+                    indices.push(base_r);
+                    indices.push(base_r + 1);
+                    indices.push(base_r + 2);
+                    indices.push(base_r + 1);
+                    indices.push(base_r + 3);
+                    indices.push(base_r + 2);
+                }
+
+                if !vertices.is_empty() {
+                    self.wall_meshes.push(Mesh {
+                        vertices,
+                        indices,
+                        texture: Some(texture.clone()),
+                    });
+                    self.wall_mesh_bounding_boxes
+                        .push(BoundingBox::new(min_bound, max_bound));
+                }
+
+                idx = end_idx;
+            }
         }
     }
 }

@@ -16,6 +16,7 @@ pub struct CarState {
     pub heading: f32,
     pub angular_velocity: f32,
     pub timing: TimingState,
+    pub nearest_segment_index: Option<usize>,
 }
 
 impl CarState {
@@ -30,6 +31,7 @@ impl CarState {
             heading: -PI / 2.0,
             angular_velocity: 0.0,
             timing: TimingState::default(),
+            nearest_segment_index: None,
         }
     }
 
@@ -52,8 +54,12 @@ impl CarState {
         self.heading = self.heading.rem_euclid(2.0 * PI);
         self.angular_velocity *= (1.0f32 - 10.0 * dt).max(0.0);
 
-        // 2. Query nearest track segment for kerb & wall collision logic
-        if let Some((seg, _idx, _dist)) = track.find_nearest_segment(vec2(self.pos_x, self.pos_y)) {
+        // 2. Query nearest track segment for kerb & wall collision logic with localized temporal window search
+        if let Some((seg, idx, _dist)) = track.find_nearest_segment_localized(
+            vec2(self.pos_x, self.pos_y),
+            self.nearest_segment_index,
+        ) {
+            self.nearest_segment_index = Some(idx);
             let offset_vec = vec2(self.pos_x, self.pos_y) - seg.center;
             let lat_offset = offset_vec.dot(seg.normal);
             let abs_offset = lat_offset.abs();
@@ -179,6 +185,7 @@ impl CarState {
         self.vel_y = 0.0;
         self.heading = heading;
         self.angular_velocity = 0.0;
+        self.nearest_segment_index = None;
         self.timing.reset();
     }
 

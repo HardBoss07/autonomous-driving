@@ -49,3 +49,29 @@ impl LineSegment {
         (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct BoundingBox {
+    pub min: Vec2,
+    pub max: Vec2,
+}
+
+impl BoundingBox {
+    pub fn new(min: Vec2, max: Vec2) -> Self {
+        Self { min, max }
+    }
+
+    pub fn intersects(&self, other: &BoundingBox) -> bool {
+        self.min.x <= other.max.x
+            && self.max.x >= other.min.x
+            && self.min.y <= other.max.y
+            && self.max.y >= other.min.y
+    }
+
+    pub fn contains_point(&self, point: Vec2) -> bool {
+        point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
+    }
+}
