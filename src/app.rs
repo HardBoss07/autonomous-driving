@@ -1,4 +1,5 @@
 use crate::core::car::{CarConfig, CarState};
+use crate::core::geometry::BoundingBox;
 use crate::core::physics::CarInput;
 use crate::core::track::Track;
 use crate::render::editor::TrackEditor;
@@ -53,7 +54,7 @@ impl App {
 
         let screen_center = vec2(screen_width() * 0.5, screen_height() * 0.5);
         let mut track = Track::new(screen_center);
-        track.rebuild_mesh(5, track_texture.as_ref());
+        track.rebuild_mesh(5, track_texture.as_ref(), wall_texture.as_ref());
 
         let (spawn_pos, spawn_heading) = track.start_grid_config.get_anchor_transform(0);
         let mut car = CarState::new(spawn_pos.x, spawn_pos.y);
@@ -118,11 +119,19 @@ impl App {
                         ..Default::default()
                     });
 
+                    let view_half_w = (screen_width() * 0.5) / self.driving_zoom;
+                    let view_half_h = (screen_height() * 0.5) / self.driving_zoom;
+                    let view_bounds = BoundingBox::new(
+                        self.camera_target - vec2(view_half_w, view_half_h),
+                        self.camera_target + vec2(view_half_w, view_half_h),
+                    );
+
                     debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
                     track_render::draw_track(
                         &self.track,
                         self.grid_texture.as_ref(),
                         self.wall_texture.as_ref(),
+                        Some(view_bounds),
                     );
 
                     self.skidmark_manager.draw();
@@ -131,6 +140,7 @@ impl App {
                         debug::draw_checkpoints(
                             &self.track.checkpoints,
                             self.car.timing.next_checkpoint_idx,
+                            Some(view_bounds),
                         );
                     }
 
@@ -158,6 +168,7 @@ impl App {
                     self.editor.handle_input(
                         &mut self.track,
                         self.track_texture.as_ref(),
+                        self.wall_texture.as_ref(),
                         world_mouse,
                         screen_mouse,
                         &mut self.camera_target,
@@ -176,11 +187,19 @@ impl App {
                         ..Default::default()
                     });
 
+                    let view_half_w = (screen_width() * 0.5) / self.editor_zoom;
+                    let view_half_h = (screen_height() * 0.5) / self.editor_zoom;
+                    let view_bounds = BoundingBox::new(
+                        self.camera_target - vec2(view_half_w, view_half_h),
+                        self.camera_target + vec2(view_half_w, view_half_h),
+                    );
+
                     debug::draw_grid(64.0, screen_width() * 10.0, screen_height() * 10.0);
                     track_render::draw_track(
                         &self.track,
                         self.grid_texture.as_ref(),
                         self.wall_texture.as_ref(),
+                        Some(view_bounds),
                     );
                     self.editor
                         .draw_snap_previews(&self.track, world_mouse, self.editor_zoom);
@@ -191,6 +210,7 @@ impl App {
                         &mut self.track,
                         &mut self.editor_zoom,
                         self.track_texture.as_ref(),
+                        self.wall_texture.as_ref(),
                     );
 
                     if self.editor.show_help_overlay {
@@ -198,7 +218,11 @@ impl App {
                     }
 
                     if done {
-                        self.track.rebuild_mesh(5, self.track_texture.as_ref());
+                        self.track.rebuild_mesh(
+                            5,
+                            self.track_texture.as_ref(),
+                            self.wall_texture.as_ref(),
+                        );
                         self.mode = AppMode::Driving;
 
                         let (spawn_pos, heading) =
