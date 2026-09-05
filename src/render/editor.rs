@@ -71,7 +71,12 @@ impl TrackEditor {
         self.redo_stack.clear();
     }
 
-    pub fn undo(&mut self, track: &mut Track, track_tex: Option<&Texture2D>) {
+    pub fn undo(
+        &mut self,
+        track: &mut Track,
+        track_tex: Option<&Texture2D>,
+        wall_tex: Option<&Texture2D>,
+    ) {
         if let Some(snapshot) = self.undo_stack.pop() {
             let current = EditorSnapshot {
                 raw_points: track.raw_points.clone(),
@@ -85,11 +90,16 @@ impl TrackEditor {
             track.starting_grid.position = snapshot.grid_position;
             track.starting_grid.rotation = snapshot.grid_rotation;
             track.is_closed = snapshot.is_closed;
-            track.rebuild_mesh(5, track_tex);
+            track.rebuild_mesh(5, track_tex, wall_tex);
         }
     }
 
-    pub fn redo(&mut self, track: &mut Track, track_tex: Option<&Texture2D>) {
+    pub fn redo(
+        &mut self,
+        track: &mut Track,
+        track_tex: Option<&Texture2D>,
+        wall_tex: Option<&Texture2D>,
+    ) {
         if let Some(snapshot) = self.redo_stack.pop() {
             let current = EditorSnapshot {
                 raw_points: track.raw_points.clone(),
@@ -103,7 +113,7 @@ impl TrackEditor {
             track.starting_grid.position = snapshot.grid_position;
             track.starting_grid.rotation = snapshot.grid_rotation;
             track.is_closed = snapshot.is_closed;
-            track.rebuild_mesh(5, track_tex);
+            track.rebuild_mesh(5, track_tex, wall_tex);
         }
     }
 
@@ -112,6 +122,7 @@ impl TrackEditor {
         track: &mut Track,
         camera_zoom: &mut f32,
         track_tex: Option<&Texture2D>,
+        wall_tex: Option<&Texture2D>,
     ) -> bool {
         let mut exit_editor = false;
 
@@ -178,7 +189,7 @@ impl TrackEditor {
             if ui.button(None, loop_text) {
                 self.save_snapshot(track);
                 track.is_closed = !track.is_closed;
-                track.rebuild_mesh(5, track_tex);
+                track.rebuild_mesh(5, track_tex, wall_tex);
             }
 
             let mut tol = track.simplify_tolerance;
@@ -186,7 +197,7 @@ impl TrackEditor {
             if (tol - track.simplify_tolerance).abs() > 0.01 {
                 track.simplify_tolerance = tol;
                 track.simplify_raw_points();
-                track.rebuild_mesh(5, track_tex);
+                track.rebuild_mesh(5, track_tex, wall_tex);
             }
 
             if ui.button(None, "Clear Track Curve") {
@@ -201,7 +212,7 @@ impl TrackEditor {
             ui.slider(hash!(), "Gate Spacing", 100.0..1200.0, &mut spacing);
             if (spacing - track.checkpoint_spacing).abs() > 1.0 {
                 track.checkpoint_spacing = spacing;
-                track.rebuild_mesh(5, track_tex);
+                track.rebuild_mesh(5, track_tex, wall_tex);
             }
 
             ui.separator();
@@ -209,10 +220,10 @@ impl TrackEditor {
             ui.slider(hash!(), "Zoom Level", 0.05..2.5, camera_zoom);
 
             if ui.button(None, "Undo Action (Ctrl+Z)") {
-                self.undo(track, track_tex);
+                self.undo(track, track_tex, wall_tex);
             }
             if ui.button(None, "Redo Action (Ctrl+Y)") {
-                self.redo(track, track_tex);
+                self.redo(track, track_tex, wall_tex);
             }
 
             let help_btn_text = if self.show_help_overlay {
@@ -238,6 +249,7 @@ impl TrackEditor {
         &mut self,
         track: &mut Track,
         track_tex: Option<&Texture2D>,
+        wall_tex: Option<&Texture2D>,
         world_mouse: Vec2,
         screen_mouse: Vec2,
         camera_target: &mut Vec2,
@@ -288,7 +300,7 @@ impl TrackEditor {
             }
             let step_rad = 5.0_f32.to_radians();
             track.starting_grid.rotation += wheel_y.signum() * step_rad;
-            track.rebuild_mesh(3, track_tex);
+            track.rebuild_mesh(3, track_tex, wall_tex);
         } else {
             self.is_rotating_grid = false;
 
@@ -328,9 +340,9 @@ impl TrackEditor {
 
         if ctrl_down && z_or_y_pressed {
             if shift_down {
-                self.redo(track, track_tex);
+                self.redo(track, track_tex, wall_tex);
             } else {
-                self.undo(track, track_tex);
+                self.undo(track, track_tex, wall_tex);
             }
             return;
         }
@@ -355,7 +367,7 @@ impl TrackEditor {
                 track.remove_raw_point(idx);
                 self.hovered_node_index = None;
                 self.selected_node_index = None;
-                track.rebuild_mesh(5, track_tex);
+                track.rebuild_mesh(5, track_tex, wall_tex);
                 return;
             }
         }
@@ -379,7 +391,7 @@ impl TrackEditor {
 
                 if is_mouse_button_released(MouseButton::Left) {
                     if self.is_dragging_start || self.is_dragging_node {
-                        track.rebuild_mesh(5, track_tex);
+                        track.rebuild_mesh(5, track_tex, wall_tex);
                     }
                     self.is_dragging_start = false;
                     self.is_dragging_node = false;
@@ -387,13 +399,13 @@ impl TrackEditor {
 
                 if self.is_dragging_start {
                     track.starting_grid.position = world_mouse;
-                    track.rebuild_mesh(3, track_tex);
+                    track.rebuild_mesh(3, track_tex, wall_tex);
                 }
 
                 if self.is_dragging_node {
                     if let Some(idx) = self.selected_node_index {
                         track.move_raw_point(idx, world_mouse);
-                        track.rebuild_mesh(3, track_tex);
+                        track.rebuild_mesh(3, track_tex, wall_tex);
                     }
                 }
             }
@@ -414,7 +426,7 @@ impl TrackEditor {
                         track.add_raw_point(world_mouse);
                     }
 
-                    track.rebuild_mesh(5, track_tex);
+                    track.rebuild_mesh(5, track_tex, wall_tex);
                 }
             }
             EditorTool::NodeDelete => {
@@ -423,7 +435,7 @@ impl TrackEditor {
                         self.save_snapshot(track);
                         track.remove_raw_point(idx);
                         self.hovered_node_index = None;
-                        track.rebuild_mesh(5, track_tex);
+                        track.rebuild_mesh(5, track_tex, wall_tex);
                     }
                 }
             }
@@ -445,7 +457,7 @@ impl TrackEditor {
                     };
 
                     track.add_raw_point(target);
-                    track.rebuild_mesh(2, track_tex);
+                    track.rebuild_mesh(2, track_tex, wall_tex);
                 }
 
                 if is_mouse_button_released(MouseButton::Left) && self.is_drawing {
@@ -460,7 +472,7 @@ impl TrackEditor {
                         }
                     }
                     track.simplify_raw_points();
-                    track.rebuild_mesh(5, track_tex);
+                    track.rebuild_mesh(5, track_tex, wall_tex);
                 }
             }
         }

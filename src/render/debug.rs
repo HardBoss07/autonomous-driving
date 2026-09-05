@@ -51,8 +51,18 @@ pub fn draw_drift_indicator(car: &CarState, is_drifting: bool) {
     }
 }
 
-pub fn draw_checkpoints(checkpoints: &[CheckpointGate], next_checkpoint_idx: usize) {
+pub fn draw_checkpoints(
+    checkpoints: &[CheckpointGate],
+    next_checkpoint_idx: usize,
+    view_bounds: Option<crate::core::geometry::BoundingBox>,
+) {
     for (idx, gate) in checkpoints.iter().enumerate() {
+        if let Some(ref view) = view_bounds {
+            if !view.intersects(&gate.bounding_box()) {
+                continue;
+            }
+        }
+
         let is_target = idx == next_checkpoint_idx;
         let is_start_finish = idx == 0;
 
@@ -74,7 +84,22 @@ pub fn draw_checkpoints(checkpoints: &[CheckpointGate], next_checkpoint_idx: usi
         );
 
         // Draw checkpoint ID tag at segment midpoint
-        let mid = (gate.line.a + gate.line.b) * 0.5;
-        draw_text(&format!("{}", gate.id), mid.x, mid.y, 14.0, WHITE);
+        let mid = gate.center();
+        let mut buffer = [0u8; 20];
+        let id_str = format_usize(gate.id, &mut buffer);
+        draw_text(id_str, mid.x, mid.y, 14.0, WHITE);
     }
+}
+
+fn format_usize<'a>(mut n: usize, buffer: &'a mut [u8]) -> &'a str {
+    if n == 0 {
+        return "0";
+    }
+    let mut index = buffer.len();
+    while n > 0 {
+        index -= 1;
+        buffer[index] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    std::str::from_utf8(&buffer[index..]).unwrap_or("")
 }

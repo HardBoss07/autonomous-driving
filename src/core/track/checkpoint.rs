@@ -38,4 +38,10 @@ impl CheckpointGate {
         let dir = self.direction();
         vec2(-dir.y, dir.x)
     }
+
+    pub fn bounding_box(&self) -> crate::core::geometry::BoundingBox {
+        let min = self.line.a.min(self.line.b);
+        let max = self.line.a.max(self.line.b);
+        crate::core::geometry::BoundingBox::new(min, max)
+    }
 }
