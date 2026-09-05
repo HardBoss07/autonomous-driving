@@ -1,7 +1,10 @@
 use crate::core::car::config::CarConfig;
+use crate::core::car::physics::{
+    compute_longitudinal_velocity, integrate_heading, resolve_wall_collision, update_steering,
+};
 use crate::core::physics::CarInput;
 use crate::core::timing::TimingState;
-use crate::core::track::{Track, TrackSegment};
+use crate::core::track::Track;
 use macroquad::prelude::{Vec2, vec2};
 use std::f32::consts::PI;
 
@@ -50,7 +53,10 @@ impl CarState {
         let mut drag_coeff = config.drag_coeff;
 
         // 1. Smoothly integrate angular velocity into heading with exponential damping
-        self.integrate_heading(dt);
+        let (new_heading, new_angular_vel) =
+            integrate_heading(self.heading, self.angular_velocity, dt);
+        self.heading = new_heading;
+        self.angular_velocity = new_angular_vel;
 
         // 2. Query nearest track segment for kerb & wall collision logic with localized temporal window search
         self.handle_track_boundary_interaction(track, &mut drag_coeff, &mut turn_rate, dt);
@@ -65,7 +71,8 @@ impl CarState {
         let is_drifting = input.is_drifting();
 
         // 3. Steering
-        self.update_steering(
+        self.heading = update_steering(
+            self.heading,
             input.steer,
             turn_rate,
             config.drift_turn_multiplier,
@@ -75,7 +82,7 @@ impl CarState {
         );
 
         // 4. Acceleration / Braking
-        let new_v_long = self.compute_longitudinal_velocity(v_long, input, config, drag_coeff, dt);
+        let new_v_long = compute_longitudinal_velocity(v_long, input, config, drag_coeff, dt);
 
         // 5. Lateral grip damping
         let new_v_lat = v_lat * (1.0f32 - config.grip_normal).powf(dt * 60.0);
@@ -108,12 +115,6 @@ impl CarState {
         self.timing.reset();
     }
 
-    fn integrate_heading(&mut self, dt: f32) {
-        self.heading += self.angular_velocity * dt;
-        self.heading = self.heading.rem_euclid(2.0 * PI);
-        self.angular_velocity *= (1.0f32 - 10.0 * dt).max(0.0);
-    }
-
     fn handle_track_boundary_interaction(
         &mut self,
         track: &Track,
@@ -138,123 +139,20 @@ impl CarState {
                 *drag_coeff *= 1.35;
                 *turn_rate *= 1.25;
             } else if abs_offset > wall_limit {
-                self.resolve_wall_collision(&seg, lat_offset, wall_limit, dt);
-            }
-        }
-    }
-
-    fn resolve_wall_collision(
-        &mut self,
-        segment: &TrackSegment,
-        lat_offset: f32,
-        wall_limit: f32,
-        dt: f32,
-    ) {
-        // Wall Collision & Anti-Wall-Riding Physics
-        let wall_normal = if lat_offset > 0.0 {
-            -segment.normal
-        } else {
-            segment.normal
-        };
-
-        // Gently clamp car position to wall boundary
-        let clamped_pos = segment.center - wall_normal * (wall_limit - 1.5);
-        self.pos_x = clamped_pos.x;
-        self.pos_y = clamped_pos.y;
-
-        let vel = vec2(self.vel_x, self.vel_y);
-        let speed = vel.length();
-        let v_normal_mag = vel.dot(wall_normal);
-
-        if v_normal_mag < 0.0 {
-            let v_normal = wall_normal * v_normal_mag;
-            let v_tangent = vel - v_normal;
-            let impact_speed = -v_normal_mag;
-
-            let normal_ratio = if speed > 5.0 {
-                impact_speed / speed
-            } else {
-                0.0
-            };
-
-            if normal_ratio < 0.35 {
-                // SHALLOW IMPACT / PARALLEL SCRAPING:
-                // Slide smoothly along wall with realistic friction without spinning out
-                let new_v_tangent = v_tangent * (1.0 - 1.8 * dt).max(0.2);
-                let new_vel = new_v_tangent;
-
+                let (new_pos, new_vel, new_ang_vel) = resolve_wall_collision(
+                    vec2(self.vel_x, self.vel_y),
+                    self.angular_velocity,
+                    &seg,
+                    lat_offset,
+                    wall_limit,
+                    dt,
+                );
+                self.pos_x = new_pos.x;
+                self.pos_y = new_pos.y;
                 self.vel_x = new_vel.x;
                 self.vel_y = new_vel.y;
-
-                // Slight repulsive nudge away from wall so car doesn't stick
-                self.pos_x += wall_normal.x * 12.0 * dt;
-                self.pos_y += wall_normal.y * 12.0 * dt;
-            } else {
-                // HARSH ANGLE IMPACT:
-                // Rebound velocity and impart smooth physical angular momentum (torque)
-                let new_v_normal = -0.25 * v_normal;
-                let new_v_tangent = 0.55 * v_tangent;
-
-                let new_vel = new_v_normal + new_v_tangent;
-                self.vel_x = new_vel.x;
-                self.vel_y = new_vel.y;
-
-                // Apply continuous angular velocity torque instead of instant rotation jump
-                let spin_direction = if v_tangent.dot(segment.tangent) >= 0.0 {
-                    1.0
-                } else {
-                    -1.0
-                };
-                let torque_bias = if lat_offset > 0.0 { -1.0 } else { 1.0 };
-
-                self.angular_velocity += torque_bias * spin_direction * impact_speed * 0.035;
+                self.angular_velocity = new_ang_vel;
             }
-        }
-    }
-
-    fn update_steering(
-        &mut self,
-        steer_input: f32,
-        turn_rate: f32,
-        drift_multiplier: f32,
-        v_long: f32,
-        is_drifting: bool,
-        dt: f32,
-    ) {
-        let turn_threshold = 120.0;
-        let turn_factor = (v_long.abs() / turn_threshold).clamp(0.0, 1.0);
-        let steering_direction = if v_long < -10.0 { -1.0 } else { 1.0 };
-
-        let active_turn_rate = if is_drifting {
-            turn_rate * drift_multiplier
-        } else {
-            turn_rate
-        };
-
-        self.heading += steer_input * active_turn_rate * steering_direction * turn_factor * dt;
-        self.heading = self.heading.rem_euclid(2.0 * PI);
-    }
-
-    fn compute_longitudinal_velocity(
-        &self,
-        v_long: f32,
-        input: &CarInput,
-        config: &CarConfig,
-        drag_coeff: f32,
-        dt: f32,
-    ) -> f32 {
-        if input.is_straight_braking() {
-            let brake_decel = config.brake_force * 1.5 * dt;
-            if v_long.abs() <= brake_decel {
-                0.0
-            } else {
-                v_long - v_long.signum() * brake_decel
-            }
-        } else {
-            let f_drive = input.throttle * config.engine_force - input.brake * config.brake_force;
-            let f_drag = -drag_coeff * v_long * v_long.abs();
-            let accel_long = f_drive + f_drag;
-            (v_long + accel_long * dt).clamp(-config.max_speed * 0.3, config.max_speed)
         }
     }
 
