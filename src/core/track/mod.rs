@@ -181,7 +181,8 @@ impl Track {
 
                 // If car is within the track/kerb corridor (e.g. 150px squared = 22500), local window is reliable
                 if local_min_dist_sq < 22500.0 {
-                    return local_best_seg.map(|seg| (seg, local_best_idx, local_min_dist_sq.sqrt()));
+                    return local_best_seg
+                        .map(|seg| (seg, local_best_idx, local_min_dist_sq.sqrt()));
                 }
             }
         }
@@ -513,16 +514,8 @@ impl Track {
                     let l2_in = s2.left_bound;
                     let l2_out = s2.left_bound - s2.normal * wall_width;
 
-                    min_bound = min_bound
-                        .min(l1_in)
-                        .min(l1_out)
-                        .min(l2_in)
-                        .min(l2_out);
-                    max_bound = max_bound
-                        .max(l1_in)
-                        .max(l1_out)
-                        .max(l2_in)
-                        .max(l2_out);
+                    min_bound = min_bound.min(l1_in).min(l1_out).min(l2_in).min(l2_out);
+                    max_bound = max_bound.max(l1_in).max(l1_out).max(l2_in).max(l2_out);
 
                     let base_l = vertices.len() as u16;
                     vertices.push(Vertex {
@@ -563,16 +556,8 @@ impl Track {
                     let r2_in = s2.right_bound;
                     let r2_out = s2.right_bound + s2.normal * wall_width;
 
-                    min_bound = min_bound
-                        .min(r1_in)
-                        .min(r1_out)
-                        .min(r2_in)
-                        .min(r2_out);
-                    max_bound = max_bound
-                        .max(r1_in)
-                        .max(r1_out)
-                        .max(r2_in)
-                        .max(r2_out);
+                    min_bound = min_bound.min(r1_in).min(r1_out).min(r2_in).min(r2_out);
+                    max_bound = max_bound.max(r1_in).max(r1_out).max(r2_in).max(r2_out);
 
                     let base_r = vertices.len() as u16;
                     vertices.push(Vertex {

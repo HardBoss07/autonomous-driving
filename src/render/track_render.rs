@@ -61,9 +61,18 @@ fn draw_outer_walls(
                 let s2 = &chain[i + 1];
 
                 if let Some(ref view) = view_bounds {
-                    let min_p = s1.left_bound.min(s2.left_bound).min(s1.right_bound).min(s2.right_bound);
-                    let max_p = s1.left_bound.max(s2.left_bound).max(s1.right_bound).max(s2.right_bound);
-                    let seg_bb = BoundingBox::new(min_p - vec2(10.0, 10.0), max_p + vec2(10.0, 10.0));
+                    let min_p = s1
+                        .left_bound
+                        .min(s2.left_bound)
+                        .min(s1.right_bound)
+                        .min(s2.right_bound);
+                    let max_p = s1
+                        .left_bound
+                        .max(s2.left_bound)
+                        .max(s1.right_bound)
+                        .max(s2.right_bound);
+                    let seg_bb =
+                        BoundingBox::new(min_p - vec2(10.0, 10.0), max_p + vec2(10.0, 10.0));
                     if !view.intersects(&seg_bb) {
                         continue;
                     }
