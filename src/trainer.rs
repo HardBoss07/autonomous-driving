@@ -1,1 +1,1 @@
-pub mod batch;
+// Trainer module
