@@ -1,10 +1,11 @@
+pub mod rendering;
+
 use crate::core::car::{CarConfig, CarState};
-use crate::core::geometry::BoundingBox;
 use crate::core::physics::CarInput;
 use crate::core::track::Track;
 use crate::render::editor::TrackEditor;
 use crate::render::skidmarks::SkidmarkManager;
-use crate::render::{debug, track_render, ui};
+use crate::render::ui;
 use macroquad::prelude::*;
 
 #[derive(PartialEq, Eq, Debug)]
@@ -111,7 +112,19 @@ impl App {
         let follow_speed = 6.0;
         self.camera_target += (car_pos - self.camera_target) * (follow_speed * dt).min(1.0);
 
-        self.render_driving_scene(&input);
+        rendering::render_driving(
+            self.camera_target,
+            self.driving_zoom,
+            &self.track,
+            self.grid_texture.as_ref(),
+            self.wall_texture.as_ref(),
+            &self.skidmark_manager,
+            &self.car,
+            self.car_texture.as_ref(),
+            &input,
+            self.show_checkpoints,
+            &mut self.config,
+        );
 
         if ui::draw_editor_toggle_button() {
             self.mode = AppMode::TrackEditor;
@@ -123,53 +136,6 @@ impl App {
         self.car.reset_to_grid(spawn_pos, spawn_heading);
         self.camera_target = spawn_pos;
         self.skidmark_manager.clear();
-    }
-
-    fn render_driving_scene(&mut self, input: &CarInput) {
-        clear_background(Color::new(0.08, 0.08, 0.10, 1.0));
-
-        set_camera(&Camera2D {
-            target: self.camera_target,
-            zoom: vec2(
-                (2.0 / screen_width()) * self.driving_zoom,
-                (2.0 / screen_height()) * self.driving_zoom,
-            ),
-            ..Default::default()
-        });
-
-        let view_half_w = (screen_width() * 0.5) / self.driving_zoom;
-        let view_half_h = (screen_height() * 0.5) / self.driving_zoom;
-        let view_bounds = BoundingBox::new(
-            self.camera_target - vec2(view_half_w, view_half_h),
-            self.camera_target + vec2(view_half_w, view_half_h),
-        );
-
-        debug::draw_grid(64.0, screen_width() * 4.0, screen_height() * 4.0);
-        track_render::draw_track(
-            &self.track,
-            self.grid_texture.as_ref(),
-            self.wall_texture.as_ref(),
-            Some(view_bounds),
-        );
-
-        self.skidmark_manager.draw();
-
-        if self.show_checkpoints {
-            debug::draw_checkpoints(
-                &self.track.checkpoints,
-                self.car.timing.next_checkpoint_idx,
-                Some(view_bounds),
-            );
-        }
-
-        let is_drifting = input.is_drifting();
-        debug::draw_car(&self.car, self.car_texture.as_ref(), input.handbrake);
-        debug::draw_drift_indicator(&self.car, is_drifting);
-
-        set_default_camera();
-
-        ui::draw_telemetry(&self.car, is_drifting);
-        ui::draw_tuning(&mut self.config);
     }
 
     fn update_and_render_editor(&mut self, dt: f32) {
@@ -190,7 +156,15 @@ impl App {
             dt,
         );
 
-        self.render_editor_scene(world_mouse);
+        rendering::render_editor(
+            self.camera_target,
+            self.editor_zoom,
+            &self.track,
+            self.grid_texture.as_ref(),
+            self.wall_texture.as_ref(),
+            &self.editor,
+            world_mouse,
+        );
 
         let done = self.editor.update_and_draw_ui(
             &mut self.track,
@@ -206,38 +180,6 @@ impl App {
         if done {
             self.exit_editor_to_driving();
         }
-    }
-
-    fn render_editor_scene(&self, world_mouse: Vec2) {
-        clear_background(Color::new(0.05, 0.05, 0.07, 1.0));
-
-        set_camera(&Camera2D {
-            target: self.camera_target,
-            zoom: vec2(
-                (2.0 / screen_width()) * self.editor_zoom,
-                (2.0 / screen_height()) * self.editor_zoom,
-            ),
-            ..Default::default()
-        });
-
-        let view_half_w = (screen_width() * 0.5) / self.editor_zoom;
-        let view_half_h = (screen_height() * 0.5) / self.editor_zoom;
-        let view_bounds = BoundingBox::new(
-            self.camera_target - vec2(view_half_w, view_half_h),
-            self.camera_target + vec2(view_half_w, view_half_h),
-        );
-
-        debug::draw_grid(64.0, screen_width() * 10.0, screen_height() * 10.0);
-        track_render::draw_track(
-            &self.track,
-            self.grid_texture.as_ref(),
-            self.wall_texture.as_ref(),
-            Some(view_bounds),
-        );
-        self.editor
-            .draw_snap_previews(&self.track, world_mouse, self.editor_zoom);
-
-        set_default_camera();
     }
 
     fn exit_editor_to_driving(&mut self) {
