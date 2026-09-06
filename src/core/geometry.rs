@@ -1,6 +1,9 @@
 use macroquad::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+pub mod ext;
+pub use ext::{FloatExt, Vec2Ext};
+
 pub mod vec2_serde {
     use super::*;
 

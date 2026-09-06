@@ -1,12 +1,11 @@
 use crate::core::car::config::CarConfig;
+use crate::core::geometry::FloatExt;
 use crate::core::physics::CarInput;
 use crate::core::track::TrackSegment;
 use macroquad::prelude::Vec2;
-use std::f32::consts::PI;
 
 pub fn integrate_heading(heading: f32, mut angular_velocity: f32, delta_time: f32) -> (f32, f32) {
-    let mut new_heading = heading + angular_velocity * delta_time;
-    new_heading = new_heading.rem_euclid(2.0 * PI);
+    let new_heading = (heading + angular_velocity * delta_time).to_normalized_radians();
     angular_velocity *= (1.0f32 - 10.0 * delta_time).max(0.0);
     (new_heading, angular_velocity)
 }
@@ -31,7 +30,7 @@ pub fn update_steering(
     };
 
     heading += steer_input * active_turn_rate * steering_direction * turn_factor * delta_time;
-    heading.rem_euclid(2.0 * PI)
+    heading.to_normalized_radians()
 }
 
 pub fn compute_longitudinal_velocity(

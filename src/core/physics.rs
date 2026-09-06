@@ -1,3 +1,4 @@
+use crate::core::geometry::FloatExt;
 use macroquad::input::{KeyCode, is_key_down};
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -33,7 +34,7 @@ impl CarInput {
     }
 
     pub fn is_steering(&self) -> bool {
-        self.steer.abs() > 0.01
+        !self.steer.is_near_zero_eps(0.01)
     }
 
     pub fn is_drifting(&self) -> bool {
