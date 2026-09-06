@@ -21,7 +21,7 @@ pub fn draw_track(
     }
 
     draw_outer_walls(track, wall_texture, view_bounds);
-    draw_starting_grid(track, grid_texture);
+    draw_starting_grid(&track.starting_grid, grid_texture);
 }
 
 fn draw_track_meshes(track: &Track, view_bounds: Option<BoundingBox>) {
