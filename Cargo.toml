@@ -8,7 +8,7 @@ name = "autonomous_driving"
 path = "src/lib.rs"
 
 [[bin]]
-name = "autonomous_driving_bin"
+name = "autonomous-driving-bin"
 path = "src/main.rs"
 
 [dependencies]
